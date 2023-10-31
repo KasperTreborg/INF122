@@ -111,7 +111,6 @@ evaluate :: (Num number, Ranged cell)
          -> Expression number cell
          -> Maybe number
 evaluate sheet expr =
-  --test
     case expr of
       Ref cell -> evaluateReference sheet cell
       Constant n -> Just n
