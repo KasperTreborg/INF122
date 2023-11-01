@@ -70,7 +70,7 @@ instance Ranged CellRef where
        = Dimension { columns :: [Char]
                    , rows :: [Integer] }
     cellRange dim ran
-        = Set.fromList [Cell columns rows | columns <- validColumns, rows <- validRows]
+        = Set.fromList [Cell columns rows | columns <- validColumns, rows <- validRows]
         where
           validColumns = [column | column <- [startCol .. endCol], column `elem` columns dim]
           validRows = [row | row <- [startRow .. endRow], row `elem` rows dim]
@@ -85,7 +85,7 @@ sheet1 =
   Sheet
     { name = "Sheet1", -- ^ Name of the sheet
       dimension = Dimension "ABC" [1..3],
-      content = 
+      content =
         Map.fromList
           [ ((Cell 'A' 1), Constant 12),
             ((Cell 'B' 1), Mul (Ref (Cell 'A' 1)) (Ref (Cell 'A' 2))),
@@ -102,7 +102,20 @@ sheet1 =
     }
 
 sheet2 :: Sheet Double CellRef
-sheet2 = undefined
+sheet2 =
+  Sheet
+    { name = "Sheet2",
+      dimension = Dimension "ABC" [1..2],
+      content =
+        Map.fromList
+          [ (Cell 'A' 1, Constant 12),
+            (Cell 'B' 1, Mul (Constant 4) (Ref (Cell 'A' 2))),
+            (Cell 'C' 1, Add (Ref (Cell 'A' 1)) (Ref (Cell 'C' 2))),
+            (Cell 'A' 2, Constant 2),
+            (Cell 'B' 2, Constant 4),
+            (Cell 'C' 2, Sum (Box (Cell 'A' 1) (Cell 'C' 1)))
+          ]
+    }
 
 -- | Evaluate an expression within the context of a sheet.
 -- Return Nothing if the expression cannot be evaluated.
@@ -110,32 +123,38 @@ evaluate :: (Num number, Ranged cell)
          => Sheet number cell
          -> Expression number cell
          -> Maybe number
-evaluate sheet expr =
-    case expr of
-      Ref cell -> evaluateReference sheet cell
-      Constant n -> Just n
-      Sum range -> evaluateSum sheet range
-      Add left right -> do
-        leftValue <- evaluate sheet left
-        rightValue <- evaluate sheet right
-        return (leftValue + rightValue)
-      Mul leftExpr rightExpr -> do
-        leftValue <- evaluate sheet leftExpr
-        rightValue <- evaluate sheet rightExpr
-        return (leftValue * rightValue)
-    where
-      evaluateReference :: (Num number, Ranged cell) => Sheet number cell -> cell -> Maybe number
-      evaluateReference sheet cell =
-        case Map.lookup cell (content sheet) of
-          Just expr -> evaluate sheet expr
-          Nothing -> Nothing
+evaluate = evaluateWithVisited Set.empty
+  where
+    evaluateWithVisited :: (Num number, Ranged cell) => Set cell -> Sheet number cell -> Expression number cell -> Maybe number
+    evaluateWithVisited visited sheet expr =
+      case expr of
+        Ref cell ->
+          if cell `Set.member` visited
+            then Nothing
+            else evaluateReference (Set.insert cell visited) sheet cell
+        Constant n -> Just n
+        Sum range -> evaluateSum visited sheet range
+        Add left right -> do
+          leftValue <- evaluateWithVisited visited sheet left
+          rightValue <- evaluateWithVisited visited sheet right
+          return (leftValue + rightValue)
+        Mul leftExpr rightExpr -> do
+          leftValue <- evaluateWithVisited visited sheet leftExpr
+          rightValue <- evaluateWithVisited visited sheet rightExpr
+          return (leftValue * rightValue)
 
-      evaluateSum :: (Num number, Ranged cell) => Sheet number cell -> CellRange cell -> Maybe number
-      evaluateSum sheet range =
-        let cells = cellRange (dimension sheet) range
-        in do
-          values <- sequence [evaluateReference sheet cell | cell <- Set.toList cells]
-          return (sum values)
+    evaluateReference :: (Num number, Ranged cell) => Set cell -> Sheet number cell -> cell -> Maybe number
+    evaluateReference visited sheet cell =
+      case Map.lookup cell (content sheet) of
+        Just expr -> evaluateWithVisited (Set.insert cell visited) sheet expr
+        Nothing -> Nothing
+
+    evaluateSum :: (Num number, Ranged cell) => Set cell -> Sheet number cell -> CellRange cell -> Maybe number
+    evaluateSum visited sheet range =
+      let cells = cellRange (dimension sheet) range
+      in do
+        values <- sequence [evaluateReference visited sheet cell | cell <- Set.toList cells]
+        return (sum values)
 
 -- The type of parsers
 newtype Parser a = Parser {runParser :: String -> Maybe (String, a)}
@@ -191,7 +210,7 @@ pNewLine :: Parser ()
 pNewLine = do
    c <- pChar
    guard (c == '\n')
-   
+
 -- | Parse a keyword
 keyword :: String -> Parser ()
 keyword [] = return ()
@@ -200,7 +219,7 @@ keyword (k : ks) = do
     guard (c == k)
     keyword ks
 
-   
+
 between :: Parser a -> Parser b -> Parser c -> Parser c
 between pOpen pClose pContent = undefined
 
@@ -340,13 +359,13 @@ instance (Show number) => Show (Sheet number CellRef) where
                                          | c <- columns (dimension sheet)]
                               | r <- rows (dimension sheet)]
     maxWidths = (maximum . map genericLength) <$> transpose printedRows
-                       
+
 --  | Read a spreadsheet from file, evaluate and print it
 getSpreadSheet :: FilePath -> IO (Sheet Double CellRef)
 getSpreadSheet file = do
    unparsed <- readFile file
    case runParser pSheet unparsed of
-      Nothing -> do 
+      Nothing -> do
                   hPutStrLn stderr "No spreadsheet found"
                   exitWith (ExitFailure 1)
       (Just (_, sheet)) -> return sheet
