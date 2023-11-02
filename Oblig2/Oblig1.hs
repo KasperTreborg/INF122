@@ -197,19 +197,17 @@ pChar = Parser pHead where
 
 
 exactChar :: Char -> Parser ()
-exactChar = undefined
+exactChar c = do
+  parsedChar <- pChar
+  guard (parsedChar == c)
 
 -- | Eat a single space
 pSpace :: Parser ()
-pSpace = do
-   c <- pChar
-   guard (c == ' ')
+pSpace = exactChar ' '
 
 -- | Eat a single newline
 pNewLine :: Parser ()
-pNewLine = do
-   c <- pChar
-   guard (c == '\n')
+pNewLine = exactChar '\n'
 
 -- | Parse a keyword
 keyword :: String -> Parser ()
@@ -221,22 +219,18 @@ keyword (k : ks) = do
 
 
 between :: Parser a -> Parser b -> Parser c -> Parser c
-between pOpen pClose pContent = undefined
+between pOpen pClose pContent = do
+    pOpen
+    x <- pContent
+    pClose
+    return x
 
 -- | Parse parenthesis
 inParenthesis :: Parser a -> Parser a
-inParenthesis p = do
-    keyword "("
-    x <- p
-    keyword ")"
-    return x
+inParenthesis = between (exactChar '(') (exactChar ')')
 
 -- | Parse brackets
-inBrackets p = do
-    keyword "["
-    x <- p
-    keyword "]"
-    return x
+inBrackets = between (exactChar '[') (exactChar ']')
 
 -- | Parse an operator
 pOperator :: String -> (t -> t -> t) -> Parser t -> Parser t
@@ -258,10 +252,22 @@ pRead =
         ((v, s) : _) -> Just (s, v)
     )
 
+--data Expression number cell
+--  = Ref cell                     -- ^ Reference to another cell
+--  | Constant number              -- ^ Constant numerical value
+--  | Sum (CellRange cell)         -- ^ Summation over a range of cells
+--  | Add
+--      (Expression number cell)   -- ^ Left operand of addition
+--      (Expression number cell)   -- ^ Right operand of addition
+--  | Mul
+--      (Expression number cell)   -- ^ Left operand of multiplication
+--      (Expression number cell)   -- ^ Right operand of multiplication
+--  deriving (Eq, Ord)
+
 -- | Parse cell expressions
 pExpression :: (Read number)
             => Parser (Expression number CellRef)
-pExpression = undefined
+pExpression = pAdd
 
 -- | Parse an atomic term
 pTerm :: Read number => Parser (Expression number CellRef)
@@ -272,29 +278,39 @@ pTerm =  inParenthesis pExpression
 
 -- | Parse a numeric constant
 pConstant :: (Read number) => Parser (Expression number cell)
-pConstant = Constant <$> pRead
+pConstant = do
+  Constant <$> pRead
 
 -- | Parse a cell name
 pCell :: Parser CellRef
-pCell = undefined
+pCell = do
+  c <- pChar
+  Cell c <$> pRead
 
 -- | Parse a cell reference
 pRef :: Parser (Expression number CellRef)
-pRef = undefined
-
-
--- | Parse a multiplication expression
-pMul :: Read number => Parser (Expression number CellRef)
-pMul = undefined
-
--- | Parse an addition expression
-pAdd :: Read number => Parser (Expression number CellRef)
-pAdd = undefined
-
+pRef = do
+  keyword "!"
+  Ref <$> pCell
 
 -- | Parse a sum of cell refences like SUM(A1:C3)
 pSum :: Parser (Expression number CellRef)
-pSum = undefined
+pSum = do
+  keyword "SUM"
+  box <- inParenthesis (do
+    x1 <- pCell
+    keyword ":"
+    Box x1 <$> pCell
+    )
+  return $ Sum box
+
+-- | Parse a multiplication expression
+pMul :: Read number => Parser (Expression number CellRef)
+pMul = pOperator "*" Mul pTerm
+
+-- | Parse an addition expression
+pAdd :: Read number => Parser (Expression number CellRef)
+pAdd = pOperator "+" Add pMul
 
 -- Now follows parsers for the sheet structure itself
 
